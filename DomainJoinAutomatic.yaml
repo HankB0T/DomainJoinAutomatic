@@ -1,0 +1,44 @@
+---
+schemaVersion: '2.2'
+description: 'SSM document to join an EC2 instance to a custom Active Directory domain using PowerShell and AWS Secrets Manager.'
+parameters:
+  DomainName:
+    type: String
+    description: 'Active Directory Domain Name'
+  SecretId:
+    type: String
+    description: 'Secret ID in AWS Secrets Manager containing domain join credentials'
+mainSteps:
+  - action: aws:runPowerShellScript
+    name: DomainJoin
+    inputs:
+      runCommand:
+        - |
+          $DomainName = "{{ DomainName }}"
+          $SecretId = "{{ SecretId }}"
+          
+          # Retrieve secret from AWS Secrets Manager
+          $Secret = Get-SECSecretValue -SecretId $SecretId | Select-Object -ExpandProperty SecretString | ConvertFrom-Json
+          
+          $DomainUser = $Secret.username
+          $DomainPass = $Secret.password
+          
+          $SecurePassword = ConvertTo-SecureString $DomainPass -AsPlainText -Force
+          $Creds = New-Object System.Management.Automation.PSCredential ($DomainUser, $SecurePassword)
+
+          # Join the domain
+          Add-Computer -DomainName $DomainName -Credential $Creds -Restart -Force
+          
+          # Test network connectivity to canaldigital.com on port 389
+            Write-Host "Testing connectivity to canaldigital.com on port 389..."
+            Test-NetConnection -ComputerName canaldigital.com -Port 389
+
+          # Validate domain join
+            $joinedDomain = (Get-WmiObject Win32_ComputerSystem).Domain
+            if ($joinedDomain -eq "CANALDIGITAL.com") {
+            Write-Host "Domain join successful. Joined to: $joinedDomain"
+            } 
+            else {
+            Write-Error "Domain Join Unsuccessful. Current domain: $joinedDomain"
+            exit 1
+            }
